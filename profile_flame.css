@@ -1,12 +1,14 @@
 .profile-flame {
     font-size: 12px !important;
     font-family: sans-serif;
+    margin: 5px;
+    overflow: scroll !important;
 }
 
 .profile-flame-toolbar {
     width: 220px;
     height: 30px;
-    position: absolute;
+    float: right;
 }
 
 .profile-flame-toolbar button{
