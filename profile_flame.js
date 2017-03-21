@@ -92,6 +92,12 @@
             var searchInput = toolbar.append('input')
                 .attr('placeholder', 'Search...')
                 .attr('title', 'Type key words, Enter to search.')
+                .on('keypress', function() {
+                    var e = d3.event;
+                    if (e && e.key == 'Enter') {
+                        search(inst);
+                    }
+                });
 
             toolbar.append('button')
                 .text('🔍')
@@ -519,9 +525,9 @@
         // search entries by kw from searchInput
         function search(inst) {
             var searchInputNode = inst.searchInput.node();
-            var kw = inst.searchKw = searchInputNode.value;
+            var kw = inst.searchKw = searchInputNode.value.toLowerCase();
             travel(inst.tree, function(n){
-                if (kw && n.data.entry.indexOf(kw) != -1) {
+                if (kw && n.data.entry.toLowerCase().indexOf(kw) != -1) {
                     n.data.onSearch = true;
                     addClass(
                         inst.svg.select("#" + n.data.id),
