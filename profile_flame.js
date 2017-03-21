@@ -341,8 +341,10 @@
         }
 
         flame.width = function(w) {
-            if (arguments.length && w > minWidth) {
-                size[0] = w - 10;
+            if (arguments.length) {
+                if (w > minWidth) {
+                    size[0] = w - 10;
+                }
                 return flame;
             }
             else {
