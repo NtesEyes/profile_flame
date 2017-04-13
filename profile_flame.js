@@ -402,6 +402,14 @@
             }
         }
 
+        function stripEntry(entry){
+            return entry.replace(/ /g, '-')
+                .replace(/</g, '')
+                .replace(/>/g, '')
+                .replace(/:/g, '-')
+                .replace(/./g, '-')
+        }
+
         // simple data node class
         function Node(entry, value, percent, compareValue){
             entry = entry || 'root';
@@ -447,7 +455,7 @@
                         }
                     }
                     this.instIndex = index;
-                    this.id = getRandomString() + '-' + this.entry;
+                    this.id = getRandomString() + '-' + stripEntry(this.entry);
                     this.raw = this.value;
                     //this.trim();
                     return this;
