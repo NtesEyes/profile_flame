@@ -63,7 +63,7 @@
 
 .profile-flame g.node rect {
     stroke: #eeeeee;
-    fill-opacity: .9;
+    fill-opacity: .8;
     stroke-width: 1;
     cursor: pointer;
 }

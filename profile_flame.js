@@ -16,6 +16,10 @@
             // for thresholds to seperate each entry of compare data
             // into five categories, such as worst, worse, normal, better, best
             thresholds = [ -0.5, -0.1, 0.1, 0.5 ],
+            // entries with val / total < cutoff will not be displayed.
+            cutoff = 0.001,
+            // switch if display the toolbar
+            showToolbar = true,
             // max stack depth to be applied when parsing data.
             maxDepth = 30;
 
@@ -28,7 +32,8 @@
             //height of header and bottom
             headerHeight = 0,
             footerHeight = 40,
-            tooltipSize = [200, 30],
+            tooltipMargin = 3,
+            tooltipLineHeight = 18,
             // max count of breadcrumbs
             maxBreadcrumbs = 5,
             // flame instances indexed by flame{index}
@@ -46,7 +51,10 @@
                 b: function (v){ return parseInt(55 * v) }
             },
             cold: {
-            },
+                r: function (v){ return parseInt(55 * v) },
+                g: function (v){ return parseInt(230 * v) },
+                b: function (v){ return 205 + parseInt(50 * v) }
+            }
         };
 
         // colors for comparing
@@ -86,6 +94,12 @@
                 //.attr("x", "30")
                 //.text(title);
                 //
+            showToolbar && putToolBar(current, inst);
+            inst.svg = svg;
+            return inst;
+        }
+
+        function putToolBar(current, inst) {
             var toolbar = d3.select(current).insert('div', ":first-child")
                 .attr('class', 'profile-flame-toolbar')
 
@@ -96,29 +110,40 @@
                     var e = d3.event;
                     if (e && e.key == 'Enter') {
                         search(inst);
+                        d3.event.sourceEvent && d3.event.sourceEvent.stopPropagation();
+                        d3.event.preventDefault();
                     }
                 });
 
             toolbar.append('button')
                 .text('🔍')
                 .attr('title', 'Click to search')
-                .on('click', function() { search(inst); })
+                .on('click', function() {
+                    search(inst);
+                    d3.event.sourceEvent.stopPropagation();
+                    d3.event.preventDefault();
+                })
 
             toolbar.append('button')
                 .text('↻')
                 .attr('title', 'Click to reset')
-                .on('click', function() { hardReset(inst); })
+                .on('click', function() {
+                    hardReset(inst);
+                    d3.event.sourceEvent.stopPropagation();
+                    d3.event.preventDefault();
+                })
 
             if (compare) {
                 toolbar.append('button')
                     .text('⇄')
                     .attr('title', 'Click to reverse compared profiles')
-                    .on('click', function() { reverseCompare(inst); });
+                    .on('click', function() {
+                        reverseCompare(inst);
+                        d3.event.sourceEvent.stopPropagation();
+                        d3.event.preventDefault();
+                    });
             }
-
-            inst.svg = svg;
             inst.searchInput = searchInput;
-            return inst;
         }
 
         // draw no data tip
@@ -142,10 +167,17 @@
                     return;
                 }
                 var tree = inst.tree.sum(_sum).sort(_sort);;
-                var nodes = partition(tree).descendants();
+                var nodes = partition(tree).descendants().filter(function(n){
+                    return !n.data.cutoff;
+                });
 
                 var totalWidth = width / (tree.x1 - tree.x0);
-                var flameHeight = levelHeight * tree.data.applyDepth;
+                var height = Math.min(
+                    tree.data.realDepth,
+                    maxDepth,
+                    tree.data.cutoffDepth || 99999
+                );
+                var flameHeight = levelHeight * height;
 
                 var height = flameHeight + headerHeight + footerHeight
                             || height;
@@ -240,8 +272,9 @@
                         .on('mouseover', function() { focus(n); })
                         .on('mouseout', function() { unfocus(n); })
                         .on('contextmenu', function() {
-                            d3.event.preventDefault();
                             pin(n);
+                            d3.event.sourceEvent.stopPropagation();
+                            d3.event.preventDefault();
                         })
                 });
                 g.exit().remove();
@@ -249,38 +282,36 @@
             });
         }
 
-        // parse raw profile to a tree
-        function parse(chains, index){
-            var tree = Node();
-            var realDepth = 0,
-                applyDepth = 0;
-            for (var i=0; i<chains.length; i++){
-                var chain = chains[i][0];
-                var value = chains[i][1];
-                var entries = chain.split(';');
-                var lastNode = tree;
-                var depth = Math.min(entries.length, maxDepth);
-                for (var j=0; j<depth; j++){
-                    var entry = entries[j];
-                    lastNode = lastNode.addChild(Node(entry, value));
-                }
-                realDepth = Math.max(realDepth, entries.length);
-                applyDepth = Math.max(applyDepth, depth);
+        function _parse(node, rawNode, depth){
+            if (depth == 0) {
+                return;
             }
-            tree.realDepth = realDepth;
-            tree.applyDepth = applyDepth;
+            for (var entry in rawNode) {
+                var rawSubNodes = rawNode[entry][0];
+                var value = rawNode[entry][1];
+                var subNode = node.addChild(Node(entry, value));
+                _parse(subNode, rawSubNodes, depth-1);
+            }
+        }
+
+        // parse raw profile to a tree
+        function parse(flame, index){
+            if (!flame) { return; }
+            var tree = Node();
+            _parse(tree, flame.tree, maxDepth);
+            tree.realDepth = flame.height;
             return tree.init(index);
         }
 
         // parse two raw profile to a tree by compare them
-        function parseCompare(chains, chainsToCompare, index) {
+        function parseCompare(flame, flameToCompare, index) {
             if (compareReverse) {
-                var tmp = chains;
-                chains = chainsToCompare;
-                chainsToCompare = tmp;
+                var tmp = flame;
+                flame = flameToCompare;
+                flameToCompare = tmp;
             }
-            var tree = parse(chains, index);
-            var treeToCompare = parse(chainsToCompare, index);
+            var tree = parse(flame, index);
+            var treeToCompare = parse(flameToCompare, index);
             var compareTree = function(n, _n) {
                 n.compareValue = _n.value;
                 n.comparePercent = _n.percent;
@@ -307,6 +338,10 @@
                 data['_index'] = index;
                 flameIndex += 1;
                 var inst = insts[index] = {};
+                if (compare && (!data[1].flame || !data[1].flame.tree)){
+                    compare = false;
+                    data = data[0];
+                }
                 if ( compare ){
                     if ( !data[0] || !data[1] ){
                         var err = 'Compare mod needs an array contains two profiles';
@@ -317,17 +352,17 @@
                         + data[0].title + ' and '
                         + data[1].title;
                     inst.tree = parseCompare(
-                        data[0].chains, data[1].chains, index
+                        data[0].flame, data[1].flame, index
                     );
-                    if (!data[0].chains || data[0].chains.length == 0){
+                    if (!data[0].flame || data[0].flame.num == 0){
                         inst.noData = true;
                     }
-                    inst.compareChains = [data[0].chains, data[1].chains];
+                    inst.compareFlame = [data[0].flame, data[1].flame];
                 }
                 else{
                     inst.title = data.title;
-                    inst.tree = parse(data.chains, index);
-                    if (!data.chains || data.chains.length == 0){
+                    inst.tree = parse(data.flame, index);
+                    if (!data.flame || data.flame.num == 0){
                         inst.noData = true;
                     }
                 }
@@ -359,6 +394,16 @@
             }
             else {
                 return size[1];
+            }
+        }
+
+        flame.cutoff = function(d) {
+            if (arguments.length) {
+                cutoff = d;
+                return flame;
+            }
+            else {
+                return cutoff;
             }
         }
 
@@ -402,6 +447,35 @@
             }
         }
 
+        flame.search = function(kw) {
+            return search(getLastInst(), kw);
+        }
+
+        flame.reset = function() {
+            hardReset(getLastInst());
+        }
+
+        flame.reverseCompare = function() {
+            reverseCompare(getLastInst());
+        }
+
+
+        flame.toolBar = function(t){
+            if (arguments.length){
+                showToolbar = t;
+                return flame;
+            }
+            else{
+                return showToolbar;
+            }
+        }
+
+        function getLastInst() {
+            if (!insts) { return;}
+            var index = 'flame' + (flameIndex - 1);
+            return insts[index];
+        }
+
         function stripEntry(entry){
             return entry.replace(/ /g, '-')
                 .replace(/</g, '')
@@ -423,11 +497,13 @@
                 // to keep raw value when value changed while drawing
                 raw: null,
                 percent: percent,
+                depth: 0,
                 children: [],
                 // index of nodes when parsing
                 index: {},
                 // sum( children.value )
                 childrenSum: 0,
+                cutoffDepth: 0,
                 addChild: function(n){
                     if (this.index[n.entry]){
                         var currentN = this.index[n.entry];
@@ -439,19 +515,34 @@
                     this.childrenSum += n.value;
                     return this.index[n.entry];
                 },
-                init: function(index, total) {
+                init: function(index, root, parent) {
                     // init root node's value and percent
                     if (this.entry === 'root') {
                         this.value = this.childrenSum;
-                        total = this.value;
+                        root = this;
+                        parent = this;
+                        this.depth = 0;
+                        this.percent = 1;
                     }
-                    this.percent = this.value / total;
+                    else{
+                        var total = root.value;
+                        this.depth = parent.depth + 1;
+                        this.percent = this.value / total;
+                    }
+                    // cutoff small node
+                    if (cutoff && this.percent < cutoff) {
+                        this.cutoff = true;
+                        if ( ! parent.cutoff) {
+                            root.cutoffDepth = Math.max(
+                                this.depth + 1, root.cutoffDepth);
+                        }
+                    }
                     // gap node has no children and no need to dye.
                     if (! this.gap) {
                         this.shift();
                         this.dye();
                         for(var i=0; i<this.children.length; i++){
-                            this.children[i].init(index, total);
+                            this.children[i].init(index, root, this);
                         }
                     }
                     this.instIndex = index;
@@ -496,12 +587,20 @@
                         return this;
                     }
                     if (compare) {
-                        var value = this.value;
-                        var compareValue = this.compareValue;
-                        this.color = compareToColor(value, compareValue);
+                        //var value = this.value;
+                        //var compareValue = this.compareValue;
+                        var percent = this.percent;
+                        var comparePercent = this.comparePercent;
+                        this.color = compareToColor(percent, comparePercent);
                     }
                     else {
-                        this.color = generateColor(hashEntry(this.entry));
+                        var theme = 'hot';
+                        if (this.entry.toLowerCase().indexOf('.py') != -1){
+                            theme = 'cold';
+                        }
+                        this.color = generateColor(
+                            hashEntry(this.entry), theme
+                        );
                     }
                     return this;
                 },
@@ -533,16 +632,20 @@
         }
 
         // search entries by kw from searchInput
-        function search(inst) {
-            var searchInputNode = inst.searchInput.node();
-            var kw = inst.searchKw = searchInputNode.value.toLowerCase();
+        function search(inst, kw) {
+            if (kw === undefined || kw === null) {
+                var searchInputNode = inst.searchInput.node();
+                var kw = inst.searchKw = searchInputNode.value.toLowerCase();
+            }
+            var match = 0;
             travel(inst.tree, function(n){
-                if (kw && n.data.entry.toLowerCase().indexOf(kw) != -1) {
+                if (searchMatch(n.data.entry, kw)){
                     n.data.onSearch = true;
                     addClass(
                         inst.svg.select("#" + n.data.id),
                         'on-search'
                     );
+                    return true;
                 }
                 else if (n.data.onSearch) {
                     n.data.onSearch = false;
@@ -551,7 +654,25 @@
                         'on-search'
                     );
                 }
+                return false;
+            }, function(n){
+                match += n.data.percent;
+                return false;
             });
+            return match;
+        }
+
+        function searchMatch(entry, kw){
+            if (kw) {
+                if (entry.toLowerCase().indexOf(kw) != -1) {
+                    return true;
+                }
+                var r = new RegExp(kw, "gi");
+                if (r.test(entry)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // clean search flag and highlight
@@ -665,7 +786,7 @@
         function focus(n) {
             var inst = getInst(n);
             if (inst.pin) { return; }
-            opacityAllEntry(inst, 0.5);
+            //opacityAllEntry(inst, 0.5);
             var chain = getChain(n);
             chainElementApply(chain, function(e){
                 if (! hasClass(e, 'virtual')) {
@@ -681,8 +802,7 @@
         function unfocus(n) {
             var inst = getInst(n);
             if (inst.pin) { return; }
-            opacityAllEntry(inst, 1);
-            inst.svg.selectAll('g.node').style('opacity', 0.9);
+            //opacityAllEntry(inst, 1);
             var chain = getChain(n);
             chainElementApply(chain, function(ele){
                 removeClass(ele, 'focus');
@@ -691,49 +811,77 @@
             hideTooltip(inst);
         }
 
+        function parseTooltip(n, charCntInLine=80){
+            var content = parseEntryDesc(n, 0);
+            var contentArray = [];
+            var n = parseInt(content.length / charCntInLine) + 1;
+            for (var i=0; i<n; i++) {
+                contentArray.push(
+                    content.substr(charCntInLine * i, charCntInLine)
+                );
+            }
+            return contentArray;
+        }
+
         // draw a tooltip to describe entry
         function showTooltip(inst, n) {
             var e = d3.event;
             // use event.x, while event.y can be not correct when srcolled
             var x = e.x;
             x -= inst.svgRect.left;
+            if (x < 0) { x = 0; }
 
             var nodeElement = inst.svg.select("#" + n.data.id);
             var et = nodeElement.attr('transform')
                 .replace('translate(', '').replace(')', '').split(', ');
             var y = parseInt(et[1]) + levelHeight + 2;
 
-            if (!x || !y) { return; }
+            if (x == undefined || y == undefined) { return; }
 
-            var content = parseEntryDesc(n, 80);
+            var contentArray = parseTooltip(n);
+            if (!contentArray || contentArray.length == 0) {
+                return;
+            }
 
             var tip = inst.svg.append("g")
                 .attr("class", "profile-flame-tooltip")
 
-            var tmpText = tip.append('text').text(content);
-            var textWidth = tmpText.node().getComputedTextLength();
-            tmpText.remove();
+            var textWidth = 0;
+            for (var i=0; i<contentArray.length; i++) {
+                var tmpText = tip.append('text').text(contentArray[i]);
+                var textWidth = Math.max(
+                    tmpText.node().getComputedTextLength(),
+                    textWidth
+                );
+                tmpText.remove();
+            }
             var range = size[0] - (x + textWidth);
             if (range < 0){
                 x = size[0] - textWidth - 10;
             }
+            var height = tooltipMargin * 2 +
+                tooltipLineHeight * contentArray.length;
             tip.append('rect')
-                .attr('width', textWidth + 10)
-                .attr('height', 30)
+                .attr('width', textWidth + 8)
+                .attr('height', height)
                 .attr('x', x)
                 .attr('y', y + 2)
                 .attr('rx', 5)
                 .attr('ry', 5)
                 .attr('fill', '#333333')
-                .attr('opacity', '.7');
+                .attr('opacity', '.85');
 
-            tip.append('text')
-                .attr('x', x)
-                .attr('y', y + 2)
-                .attr('dx', '0.35em')
-                .attr('dy', '1.5em')
-                .attr('fill', '#FFFFFF')
-                .text(content);
+            for (var i=0; i<contentArray.length; i++) {
+                var content = contentArray[i];
+                var yi = y +  i * tooltipLineHeight;
+                tip.append('text')
+                    .attr('x', x)
+                    .attr('y', yi)
+                    .attr('dx', '0.35em')
+                    .attr('dy', '1.5em')
+                    .attr('fill', '#FFFFFF')
+                    .text(content);
+            }
         }
 
         function hideTooltip(inst) {
@@ -851,13 +999,20 @@
             return string;
         }
 
-        // travel each node of tree
-        function travel(tree, cb){
+        // travel each node of tree and call cb
+        // nestCb are only call when cb returns true
+        // and travel to children when itself returns true
+        function travel(tree, cb, nestCb){
+            var nextNestCb = nestCb;
             if (tree) {
-                cb(tree);
+                if (cb(tree) && nestCb){
+                    if (!nestCb(tree)){
+                        nextNestCb = null;
+                    }
+                }
                 if (tree.children) {
                     for (var i=0; i<tree.children.length; i++) {
-                        travel(tree.children[i], cb);
+                        travel(tree.children[i], cb, nextNestCb);
                     }
                 }
             }
@@ -873,6 +1028,7 @@
         }
 
         function addClass(e, _class) {
+            if (!e || !e.size()){ return; }
             var currentClassList = e.attr('class').split(' ');
             if (currentClassList.indexOf(_class) == -1) {
                 currentClassList.push(_class);
@@ -881,6 +1037,7 @@
         }
 
         function removeClass(e, _class) {
+            if (!e || !e.size()){ return; }
             var currentClassList = e.attr('class').split(' ');
             var index = currentClassList.indexOf(_class);
             if (index != -1) {
@@ -891,18 +1048,20 @@
 
         // make text shorter
         function trimText(text, max) {
-            if (text.length > max) {
+            if (max && text.length > max) {
                 text = text.substr(0, max - 3) + '...';
             }
             return text;
         }
 
         // generate color by hash val
-        function generateColor(hash) {
-            var base = colorBase[theme];
+        function generateColor(hash, subTheme) {
+            subTheme = subTheme || theme;
+            var base = colorBase[subTheme];
             var r = base.r(hash),
                 g = base.g(hash),
                 b = base.b(hash);
+            //console.log(hash, r, g, b)
             return 'rgb({R}, {G}, {B})'
                 .replace('{R}', r)
                 .replace('{G}', g)
@@ -956,19 +1115,19 @@
                 max += 1 * weight;
                 weight *= 0.7;
             }
-            return (1 - vector / max);
+            return Math.pow(1 - vector / max, 2);
         }
 
         // parse description of entry and its data
         // shortcut the entry name if its too long
         function parseEntryDesc(n, entryMax) {
             var entry = trimText(n.data.entry, entryMax);
-            var content = "{E}: {V} ({P})"
+            var content = "{E} ({V} {P})"
                 .replace('{E}', entry)
                 .replace('{V}', n.data.value)
                 .replace('{P}', (n.data.percent * 100).toFixed(2) + '%');
             if (n.data.compareValue) {
-                content += " | {V} ({P})"
+                content += " | ({V} {P})"
                 .replace('{V}', n.data.compareValue)
                 .replace('{P}', (n.data.comparePercent *100).toFixed(2) + '%');
             }
