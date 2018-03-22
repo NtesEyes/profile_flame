@@ -33,17 +33,21 @@ d3.select(container)
 
 ## API Refs
 
-* compare(compareBool) *
+**compare(compareBool)**
 
 compare switcher, when in compare mode, data passed by d3 must be an array with two items;
 
+
 **width([width])**
 
+
 **height([height])**
+
 
 **cutoff([cutoff])**
 
 set/get cutoff threshold, entry with lower percent will be ignored. useful for those huge profiles.
+
 
 **maxDepth([maxDepth])**
 
@@ -54,17 +58,21 @@ set/get max depth of stacks
 
 set/get array of specified entries, will only render stacks with these entries.
 
+
 **search(kw)**
 
 set search keyword, those entries matched will be render in purple.
+
 
 **reset()**
 
 reset flame to origin state
 
+
 **reverseCompare()**
 
 reverse the two data items comparing
+
 
 **compareMethod([method])**
 
@@ -73,11 +81,14 @@ set/get compare method, allowed mode:
 * cumulative
 * internal
 
+
 **backward()**
 
 go backward on focus histories
 
+
 **forward()**
 
 go forward on focus histories
+
 
