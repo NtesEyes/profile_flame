@@ -2,31 +2,42 @@
     'use strict';
 
     function profileFlame () {
+        // configuable variables
+        var
             // size of whole svg
-        var size = [1024, 768],
-            // click handlers when entries clicked
+            size = [1024, 768],
+            // click handlers on entries
             clickHandlers = [],
-            // compare mode or not,
-            // an array of two datas must be passed when in compare mode
+            // compare mode swicher,
+            // an array of two data dict must be passed when in compare mode
             compare = false,
-            // reverse the two datas while compare
+            // reverse two data dict while comparing
             compareReverse = false,
-            // color theme
-            theme = 'hot',
-            // for thresholds to seperate each entry of compare data
+            // four thresholds to seperate each entry of compare data
             // into five categories, such as worst, worse, normal, better, best
             thresholds = [ -0.5, -0.1, 0.1, 0.5 ],
             // entries with val / total < cutoff will not be displayed.
-            cutoff = 0.001,
-            // switch if display the toolbar
-            showToolbar = true,
+            cutoff = 0.0005,
+            // use internal or cumulative to compare
+            compareMethod = 'cumulative',
+            // only compare entry with percent larger than this arg
+            // is dyed to red or blue
+            compareValidThreshold = 0,
+            // specified entries to show their chains as a flame
+            specifiedEntries = [],
             // max stack depth to be applied when parsing data.
-            maxDepth = 30;
+            maxDepth = 30,
+            // focus event will highlight whole chain when triggered.
+            focusChain = false;
 
+        // internal variables
+        var
             // height of rect of each entry
-        var levelHeight = 18,
+            levelHeight = 18,
             // auto increment field to sign each flame
             flameIndex = 0,
+            // default color theme
+            theme = 'hot',
             // global selection for containers
             selection = null,
             //height of header and bottom
@@ -34,14 +45,19 @@
             footerHeight = 40,
             tooltipMargin = 3,
             tooltipLineHeight = 18,
-            // max count of breadcrumbs
-            maxBreadcrumbs = 5,
-            // flame instances indexed by flame{index}
-            breadcrumbSize = [120, 30],
             minWidth = 1024,
+            // flame insts
             insts = {},
-            partition = d3.partition();
-
+            // partition object
+            partition = d3.partition(),
+            // scale arg
+            svgScaleK = 1,
+            // current and former value of x when draging
+            svgDragX = {x: 0, ex: 0},
+            // hide text when it scales too big
+            svgScaleTextThreshold = 2,
+            // final flame height accroding to max stack height
+            flameHeight = null;
 
         // theme color generators
         var colorBase = {
@@ -68,7 +84,6 @@
         }
 
 ////// BUSINESS FUNCTIONS
-        //
         // put container svg and toolbar
         function placeContainer (current, inst) {
             d3.select(current).select('svg.profile-flame').remove();
@@ -82,68 +97,104 @@
                 .attr("height", size[1])
                 .attr("class", "profile-flame")
                 .attr('id', index);
-
+            var mainG = svg
+                .append("g")
+                .attr('class', 'main-g');
+            svg.mainG = mainG;
             var svgRect = svg.node().getBoundingClientRect();
             inst.svgRect = svgRect;
 
-            //var title = inst.title;
-            //svg.append("svg:text")
-                //.attr("class", "title")
-                //.attr("text-anchor", "middle")
-                //.attr("y", "30")
-                //.attr("x", "30")
-                //.text(title);
-                //
-            showToolbar && putToolBar(current, inst);
+            setScale(svg);
+            setGlobalEvent(svg);
             inst.svg = svg;
             return inst;
         }
 
-        function putToolBar(current, inst) {
-            var toolbar = d3.select(current).insert('div', ":first-child")
-                .attr('class', 'profile-flame-toolbar')
-
-            var searchInput = toolbar.append('input')
-                .attr('placeholder', 'Search...')
-                .attr('title', 'Type key words, Enter to search.')
-                .on('keypress', function() {
-                    var e = d3.event;
-                    if (e && e.key == 'Enter') {
-                        search(inst);
-                        d3.event.sourceEvent && d3.event.sourceEvent.stopPropagation();
-                        d3.event.preventDefault();
-                    }
-                });
-
-            toolbar.append('button')
-                .text('🔍')
-                .attr('title', 'Click to search')
-                .on('click', function() {
-                    search(inst);
-                    d3.event.sourceEvent.stopPropagation();
-                    d3.event.preventDefault();
-                })
-
-            toolbar.append('button')
-                .text('↻')
-                .attr('title', 'Click to reset')
-                .on('click', function() {
-                    hardReset(inst);
-                    d3.event.sourceEvent.stopPropagation();
-                    d3.event.preventDefault();
-                })
-
-            if (compare) {
-                toolbar.append('button')
-                    .text('⇄')
-                    .attr('title', 'Click to reverse compared profiles')
-                    .on('click', function() {
-                        reverseCompare(inst);
-                        d3.event.sourceEvent.stopPropagation();
-                        d3.event.preventDefault();
-                    });
+        // set global event handler
+        function setGlobalEvent(svg) {
+            // the g elem can get events only if it was focused.
+            var globalKeyupCallback = function(e) {
+                var e = d3.event;
+                if (!e) { return; }
+                var alt = e.altKey;
+                switch(e.code) {
+                    // flame focus history actions
+                    case 'ArrowLeft':
+                        alt && flame.backward();
+                        break;
+                    case 'ArrowRight':
+                        alt && flame.forward();
+                        break;
+                    default:
+                        break;
+                }
             }
-            inst.searchInput = searchInput;
+            var body = d3.select('body');
+            // register only one keydown cb, may be overwritted by other code.
+            body.on('keyup', globalKeyupCallback);
+        }
+
+        // set scale and drag event handler
+        function setScale(svg) {
+            var mainG = svg.mainG;
+            mainG.call(
+                d3.zoom()
+                    // zoom times limited.
+                    .scaleExtent([1, 64])
+                    .filter(function(){
+                        // only zoom and drag when alt key pressed
+                        return d3.event.altKey
+                    })
+                    .on("start", function(){
+                        svgDragX.x = d3.event.transform.x;
+                        svgDragX.ex = d3.event.sourceEvent.x;
+                    })
+                    .on("zoom", function() {
+                        var et = d3.event.sourceEvent.type;
+                        var t = d3.event.transform;
+                        // reset scale and position when scale to 1
+                        if (t.k <= 1) {
+                            t.k = 1;
+                            t.x = t.y = 0;
+                        }
+
+                        var x = t.x;
+                        svgScaleK = t.k;
+
+                        // do not use event transform, it cannot fit scaled x
+                        if (et == "mousemove") {
+                            t.x = x = svgDragX.x - (svgDragX.ex - d3.event.sourceEvent.x)
+                        }
+
+                        // scale main g
+                        mainG.attr("transform",
+                            "translate({X}, 0) scale({K}, 1)"
+                                .replace("{X}", x)
+                                .replace("{K}", svgScaleK)
+                        );
+                        if (et == "wheel") {
+                            // hide text when scale too big
+                            // auto drawing on the fly is tested
+                            // and showed a pool performce on big flame.
+                            if (t.k > svgScaleTextThreshold) {
+                                mainG.selectAll("text.gtext")
+                                    .attr("class", function(d, i, e) {
+                                        if (!e[0]) { return ""; }
+                                        e[0].classList.add("hide");
+                                        return e[0].classList.value;
+                                    });
+                            }
+                            else {
+                                mainG.selectAll("text.gtext")
+                                    .attr("class", function(d, i, e) {
+                                        if (!e[0]) { return ""; }
+                                        e[0].classList.remove("hide");
+                                        return e[0].classList.value;
+                                    });
+                            }
+                        }
+                    })
+            );
         }
 
         // draw no data tip
@@ -166,25 +217,32 @@
                     drawNoData(inst);
                     return;
                 }
-                var tree = inst.tree.sum(_sum).sort(_sort);;
+                var tree = inst.tree.sum(_sum).sort(_sort);
+                // var tree = inst.tree.sort(_sort);
+                var cutoffDepth = 0;
                 var nodes = partition(tree).descendants().filter(function(n){
-                    return !n.data.cutoff;
+                    // cutoff small entries and hide entries
+                    var cut = n.x1 - n.x0 < cutoff;
+                    if (!cut) {
+                        cutoffDepth = Math.max(cutoffDepth, n.depth);
+                    }
+                    return !cut;
                 });
 
                 var totalWidth = width / (tree.x1 - tree.x0);
                 var height = Math.min(
                     tree.data.realDepth,
                     maxDepth,
-                    tree.data.cutoffDepth || 99999
-                );
-                var flameHeight = levelHeight * height;
+                    cutoffDepth || 99999
+                ) + 1;
+                // if flameHeight exists, use former value
+                // to keep height when switch focus
+                flameHeight = flameHeight || levelHeight * height;
 
                 var height = flameHeight + headerHeight + footerHeight
                             || height;
                 size[1] = height;
                 inst.svg.attr('height', height);
-                console.log('tree', tree);
-
 
                 var X = d3.scaleLinear().range([0, width]),
                     Y = d3.scaleLinear().range([0, levelHeight]);
@@ -209,8 +267,11 @@
                         return;
                     }
                     var entry = n.data.entry;
+                    n.data.entryInfo = formatComplexEntry(entry);
+                    entry = n.data.entryInfo.shortEntry;
                     var fontWidth = 7,
                         padding = 3;
+                    n.data._showHighlightFunction = false;
                     var width = (n.x1 - n.x0) * totalWidth;
                     if (width < 30) {
                         return;
@@ -221,10 +282,22 @@
                             return;
                         }
                         if (entry.length > maxLength) {
-                            entry = entry.substr(0, maxLength - 3) + '...';
+                            return entry.substr(0, maxLength - 3) + '...';
                         }
                     }
-                    return entry;
+                    if (n.data.entryInfo) {
+                        n.data._showHighlightFunction = true;
+                        return n.data.entryInfo.entryPrefix;
+                    }
+                    else {
+                        return entry;
+                    }
+                }
+                var cbFuncText = function(n) {
+                    if (n.data.entryInfo && n.data._showHighlightFunction) {
+                        return n.data.entryInfo.function;
+                    }
+                    return
                 }
                 var cbHeight = function(n) { return levelHeight; }
                 var cbFill = function(n) { return n.data.color; }
@@ -232,19 +305,35 @@
                     return n.data.gap || n.data.x1 - n.data.x0 == 0
                         ? 'hidden' : 'visible';
                 }
-                var cbVirtual = function(n) {
-                    return n.data.virtual ? 'node virtual' : 'node';
+                var cbClass = function(n) {
+                    var class_ = 'node';
+                    if (n.data.virtual) {
+                        class_ += ' virtual';
+                    }
+                    if (specifiedEntries
+                        && specifiedEntries.indexOf(n.data.entry) !== -1) {
+                        class_ += ' specified';
+                    }
+                    return class_;
+                }
+
+                var cbTextClass = function() {
+                    var c = "gtext";
+                    if (svgScaleK > svgScaleTextThreshold) {
+                        c += " hide";
+                    }
+                    return c;
                 }
 
                 var cbId = function(n) { return n.data.id; }
 
-                inst.svg.selectAll('g.node').remove();
+                inst.svg.mainG.selectAll('g.node').remove();
 
-                var g = inst.svg.selectAll('g.node').data(nodes);
+                var g = inst.svg.mainG.selectAll('g.node').data(nodes);
 
-                var node = g.enter().append('g')//.merge(g)
+                var node = g.enter().append('g')
                     .attr('id', cbId)
-                    .attr('class', cbVirtual)
+                    .attr('class', cbClass)
                     .attr('visibility', cbVisible)
                     .attr("transform", cbTranslate)
                     .attr("width", cbWidth);
@@ -252,29 +341,41 @@
                 node.append("rect")
                     .attr("height", cbHeight)
                     .attr("fill", cbFill)
+                    .attr("class", "grect")
                     .attr("width", cbWidth)
-                    .attr('rx', 3)
-                    .attr('ry', 3);
+                    .attr('rx', 1.5)
+                    .attr('ry', 1.5);
 
-                node.append("text")
+                var text = node.append("text")
                     .attr('x', 5)
                     .attr('y', levelHeight / 2)
+                    .attr("class", cbTextClass)
                     .attr('dy', '.35em')
                     .style("display", cbDisplay)
                     .text(cbText);
+
+                text.append("tspan")
+                    .attr("class", function(n) {
+                        return cbTextClass(n) + " highlightFunction";
+                    })
+                    .text(cbFuncText);
 
                 // node.on event cannot ensure n as a argument.
                 // like mouseout
                 // so pass exact n to cb in closures.
                 node.each(function(n) {
                     d3.select(this)
-                        .on('click', function() { zoom(n); })
+                        .on('click', function() { nodeClick(n); })
                         .on('mouseover', function() { focus(n); })
                         .on('mouseout', function() { unfocus(n); })
                         .on('contextmenu', function() {
                             pin(n);
-                            d3.event.sourceEvent.stopPropagation();
-                            d3.event.preventDefault();
+                            if (d3.event){
+                                d3.event.preventDefault();
+                                if (d3.event.sourceEvent){
+                                    d3.event.sourceEvent.stopPropagation();
+                                }
+                            }
                         })
                 });
                 g.exit().remove();
@@ -315,6 +416,8 @@
             var compareTree = function(n, _n) {
                 n.compareValue = _n.value;
                 n.comparePercent = _n.percent;
+                n.internalCompareValue = _n.internalValue;
+                n.internalComparePercent = _n.internalPercent;
                 Object.keys(n.index).forEach(function(entry){
                     var c = n.index[entry];
                     var _nc = _n.index[entry];
@@ -327,19 +430,40 @@
             return tree.redyeAll();
         }
 
+        function cleanup(keeps) {
+            keeps = keeps || [];
+            for (var i in insts) {
+                if (keeps.indexOf(i) != -1){
+                    continue;
+                }
+                delete insts[i];
+            }
+        }
+
         // build flame
         function flame(s) {
             if (!s) {
                 return flame;
             }
             selection = s;
+            var indexes = [];
             selection.each( function(data) {
                 var index = 'flame' + flameIndex;
                 data['_index'] = index;
                 flameIndex += 1;
-                var inst = insts[index] = {};
+                indexes.push(index);
+                var inst = insts[index] = {
+                    id: index,
+                    zoomHistory: gnrZoomHistory(),
+                    tree: null,
+                    title: null,
+                    noData: false,
+                };
                 if (compare && (!data[1].flame || !data[1].flame.tree)){
                     compare = false;
+                }
+                if (!compare && data.flame === undefined) {
+                    // is array, set data to array[0]
                     data = data[0];
                 }
                 if ( compare ){
@@ -354,7 +478,7 @@
                     inst.tree = parseCompare(
                         data[0].flame, data[1].flame, index
                     );
-                    if (!data[0].flame || data[0].flame.num == 0){
+                    if (!data[0].flame || !data[0].flame.num){
                         inst.noData = true;
                     }
                     inst.compareFlame = [data[0].flame, data[1].flame];
@@ -362,15 +486,21 @@
                 else{
                     inst.title = data.title;
                     inst.tree = parse(data.flame, index);
-                    if (!data.flame || data.flame.num == 0){
+                    if (!data.flame || !data.flame.num){
                         inst.noData = true;
                     }
                 }
                 placeContainer(this, inst);
                 inst.tree = d3.hierarchy(inst.tree);
+                filterSpecifiedEntries(inst.tree);
+
+                inst.zoomHistory.reset(inst.tree);
                 return inst;
             });
+            cleanup(indexes);
 
+            // reset flame height to fit new data
+            flameHeight = null;
             draw();
             return flame;
         }
@@ -427,16 +557,6 @@
             }
         }
 
-        flame.theme = function(t) {
-            if (arguments.length){
-                theme = t;
-                return flame;
-            }
-            else{
-                return theme;
-            }
-        }
-
         flame.clickHandler = function(cb) {
             if (arguments.length){
                 clickHandlers.push(cb);
@@ -444,6 +564,16 @@
             }
             else{
                 return clickHandlers;
+            }
+        }
+
+        flame.specifiedEntries = function(t) {
+            if (arguments.length){
+                specifiedEntries = t
+                return flame;
+            }
+            else{
+                return specifiedEntries;
             }
         }
 
@@ -459,14 +589,35 @@
             reverseCompare(getLastInst());
         }
 
-
-        flame.toolBar = function(t){
+        flame.compareMethod = function(cb) {
             if (arguments.length){
-                showToolbar = t;
+                compareMethod = cb
                 return flame;
             }
             else{
-                return showToolbar;
+                return compareMethod;
+            }
+        }
+
+        flame.backward = function() {
+            var n = getLastInst().zoomHistory.backward();
+            if (n) {
+                zoom(n, true);
+            }
+        }
+
+        flame.forward = function() {
+            var n = getLastInst().zoomHistory.forward();
+            if (n) {
+                zoom(n, true);
+            }
+        }
+
+        flame.historyPossible = function() {
+            var zoomHistory = getLastInst().zoomHistory;
+            return {
+                backward: zoomHistory.canBackward(),
+                forward: zoomHistory.canForward(),
             }
         }
 
@@ -503,7 +654,6 @@
                 index: {},
                 // sum( children.value )
                 childrenSum: 0,
-                cutoffDepth: 0,
                 addChild: function(n){
                     if (this.index[n.entry]){
                         var currentN = this.index[n.entry];
@@ -512,6 +662,7 @@
                     else{
                         this.index[n.entry] = n;
                     }
+                    // childrenSum contains no gap!!!
                     this.childrenSum += n.value;
                     return this.index[n.entry];
                 },
@@ -529,14 +680,8 @@
                         this.depth = parent.depth + 1;
                         this.percent = this.value / total;
                     }
-                    // cutoff small node
-                    if (cutoff && this.percent < cutoff) {
-                        this.cutoff = true;
-                        if ( ! parent.cutoff) {
-                            root.cutoffDepth = Math.max(
-                                this.depth + 1, root.cutoffDepth);
-                        }
-                    }
+                    this.internalValue = 0;
+                    this.internalPercent = 0;
                     // gap node has no children and no need to dye.
                     if (! this.gap) {
                         this.shift();
@@ -544,11 +689,14 @@
                         for(var i=0; i<this.children.length; i++){
                             this.children[i].init(index, root, this);
                         }
+                        // only non gap entry has internal
+                        this.internalValue = this.value - this.childrenSum;
+                        this.internalPercent = total ?
+                            this.internalValue / total : 0;
                     }
                     this.instIndex = index;
                     this.id = getRandomString() + '-' + stripEntry(this.entry);
                     this.raw = this.value;
-                    //this.trim();
                     return this;
                 },
                 shift: function() {
@@ -582,20 +730,53 @@
                     }
                     return this;
                 },
+                countCompare: function(){
+                    var percent = this.internalPercent;
+                    var comparePercent = this.internalComparePercent;
+                    this.internalCompareDiff =
+                        (percent - comparePercent) / comparePercent;
+                    this.internalCompareValid =
+                        percent >= compareValidThreshold
+                        && comparePercent >= compareValidThreshold;
+
+                    var percent = this.percent;
+                    var comparePercent = this.comparePercent;
+                    this.compareDiff =
+                        (percent - comparePercent) / comparePercent;
+                    this.compareValid =
+                        percent >= compareValidThreshold
+                        && comparePercent >= compareValidThreshold;
+                },
                 dye: function(redo) {
                     if (this.color && !redo){
                         return this;
                     }
                     if (compare) {
-                        //var value = this.value;
-                        //var compareValue = this.compareValue;
-                        var percent = this.percent;
-                        var comparePercent = this.comparePercent;
-                        this.color = compareToColor(percent, comparePercent);
+                        this.countCompare();
+
+                        if (compareMethod == 'internal') {
+                            var compareDiff = this.internalCompareDiff;
+                            var compareValid = this.internalCompareValid;
+                            var comparePercent = this.internalComparePercent;
+                        }
+                        else{
+                            var compareDiff = this.compareDiff;
+                            var compareValid = this.compareValid;
+                            var comparePercent = this.comparePercent;
+                        }
+                        if (comparePercent === null
+                            || comparePercent === undefined
+                        ) {
+                            compareDiff = null;
+                        }
+                        else if(!compareValid) {
+                            compareDiff = 0;
+                        }
+                        this.color = compareToColor(compareDiff);
                     }
                     else {
                         var theme = 'hot';
-                        if (this.entry.toLowerCase().indexOf('.py') != -1){
+                        if (isVmStack(this.entry)){
                             theme = 'cold';
                         }
                         this.color = generateColor(
@@ -617,10 +798,27 @@
             }
         }
 
+        function isVmStack(entry) {
+            if (entry.toLowerCase().indexOf('.py') != -1){
+                return true;
+            }
+            if (entry.indexOf('.c->') != -1){
+                return true;
+            }
+            if (entry.indexOf('.lua') != -1){
+                return true;
+            }
+            return false;
+        }
+
+
 ////// ACTION FUNCTIONS
 
         // reverse two profiles for comparing
         function reverseCompare(inst) {
+            if (!compare) {
+                return;
+            }
             compareReverse = !compareReverse;
             inst.svg.remove();
 
@@ -637,7 +835,9 @@
                 var searchInputNode = inst.searchInput.node();
                 var kw = inst.searchKw = searchInputNode.value.toLowerCase();
             }
+            var count = 0;
             var match = 0;
+            var internalMatch = 0;
             travel(inst.tree, function(n){
                 if (searchMatch(n.data.entry, kw)){
                     n.data.onSearch = true;
@@ -645,6 +845,8 @@
                         inst.svg.select("#" + n.data.id),
                         'on-search'
                     );
+                    count += 1;
+                    internalMatch += n.data.internalPercent;
                     return true;
                 }
                 else if (n.data.onSearch) {
@@ -659,10 +861,17 @@
                 match += n.data.percent;
                 return false;
             });
-            return match;
+            return {
+                count: count,
+                match: match,
+                internalMatch: internalMatch
+            };
         }
 
         function searchMatch(entry, kw){
+            if (entry == 'gap') {
+                return false;
+            }
             if (kw) {
                 if (entry.toLowerCase().indexOf(kw) != -1) {
                     return true;
@@ -710,6 +919,7 @@
 
         // reset all contains reverse, rebuild svg
         function hardReset(inst){
+            svgScaleK = 1;
             compareReverse = false;
             inst.svg.remove();
 
@@ -722,8 +932,26 @@
             inst.pin = !inst.pin;
         }
 
+        function nodeClick(n) {
+            var e = d3.event;
+            if (e.altKey) {
+                specifyEntry(n);
+            }
+            else {
+                zoom(n);
+            }
+        }
+
+        function specifyEntry(n) {
+            var entry = n.data.entry;
+            var inst = getInst(n)
+            specifiedEntries = [entry];
+            filterSpecifiedEntries(inst.tree);
+            draw();
+        }
+
         // zoom to expand a entry
-        function zoom(n) {
+        function zoom(n, history) {
             var inst = getInst(n)
             inst.pin = false;
             hideBrothers(n);
@@ -731,6 +959,9 @@
             show(n);
             draw();
             replaySearch(inst);
+            if (!history) {
+                inst.zoomHistory.set(n);
+            }
         }
 
         // make parent virtual while expand a entry
@@ -740,6 +971,34 @@
                 n.data.virtual = true;
                 n = n.parent;
             }
+        }
+
+        // hide entries besides specifiedEntries
+        function filterSpecifiedEntries(root) {
+            if (! specifiedEntries || ! specifiedEntries.length) { return; }
+            function _findSpecifiedEntries(n) {
+                if (specifiedEntries.indexOf(n.data.entry) !== -1) {
+                    n.data.specified = true;
+                    return true;
+                }
+                if (n.children) {
+                    var found = false;
+                    for (var i=0; i<n.children.length; i++) {
+                        if (_findSpecifiedEntries(n.children[i])){
+                            found = true;
+                        }
+                        else {
+                            n.children[i].data.value = 0;
+                            n.children[i].data.notSpecified = true;
+                        }
+                    }
+                    return found;
+                }
+                else{
+                    return false;
+                }
+            }
+            _findSpecifiedEntries(root);
         }
 
         // hide brothers recursively
@@ -771,30 +1030,34 @@
         // reset entry value show it.
         // recursively
         function show(node) {
+            if (node.data.value == 0 && node.data.notSpecified) {
+                return;
+            }
             node.data.value = node.data.raw;
             node.data.virtual = false;
             node.children && node.children.forEach(show);
-        }
-
-        // make all entries apply a given opacity
-        function opacityAllEntry(inst, opacity) {
-            inst.svg.selectAll('g.node')
-                .style('opacity', opacity);
         }
 
         // highlight entry and its ancestors when mouse on
         function focus(n) {
             var inst = getInst(n);
             if (inst.pin) { return; }
-            //opacityAllEntry(inst, 0.5);
-            var chain = getChain(n);
-            chainElementApply(chain, function(e){
+            if (focusChain) {
+                var chain = getChain(n);
+                chainElementApply(chain, function(e){
+                    if (! hasClass(e, 'virtual')) {
+                        addClass(e, 'focus');
+                        e.style('opacity', 1);
+                    }
+                });
+            }
+            else {
+                var e = inst.svg.select("#" + n.data.id);
                 if (! hasClass(e, 'virtual')) {
                     addClass(e, 'focus');
                     e.style('opacity', 1);
                 }
-            });
-            drawBreadcrumb(inst, chain);
+            }
             showTooltip(inst, n);
         }
 
@@ -802,70 +1065,143 @@
         function unfocus(n) {
             var inst = getInst(n);
             if (inst.pin) { return; }
-            //opacityAllEntry(inst, 1);
-            var chain = getChain(n);
-            chainElementApply(chain, function(ele){
-                removeClass(ele, 'focus');
-            });
-            clearBreadcrumb(inst);
+            if (focusChain) {
+                var chain = getChain(n);
+                chainElementApply(chain, function(ele){
+                    removeClass(ele, 'focus');
+                });
+            }
+            else {
+                var e = inst.svg.select("#" + n.data.id);
+                removeClass(e, 'focus');
+            }
             hideTooltip(inst);
         }
 
-        function parseTooltip(n, charCntInLine=80){
-            var content = parseEntryDesc(n, 0);
-            var contentArray = [];
-            var n = parseInt(content.length / charCntInLine) + 1;
-            for (var i=0; i<n; i++) {
-                contentArray.push(
-                    content.substr(charCntInLine * i, charCntInLine)
-                );
+        function formatTooltip(n) {
+            var dataDesc = parseDataDesc(n);
+            var info = n.data.entryInfo || {};
+            var contentArray = [
+                "Entry          : " + (info.shortEntry || info.entry || n.entry),
+                dataDesc.internalContent,
+                dataDesc.cumulativeContent,
+            ]
+            if (info.entry != info.function) {
+                contentArray.push("Function     : " + info.function);
+            }
+            if (info.entry != info.shortEntry) {
+                contentArray.push("FullEntry     : " + info.entry);
+            }
+            if (info.module) {
+                contentArray.push("Module       : " + info.module);
+            }
+            if (info.filepath) {
+                contentArray.push("SourceFile  : " + info.filepath);
+            }
+            if (info.lineNumber) {
+                contentArray.push("SourceLine : " + info.lineNumber);
             }
             return contentArray;
         }
 
-        // draw a tooltip to describe entry
-        function showTooltip(inst, n) {
-            var e = d3.event;
-            // use event.x, while event.y can be not correct when srcolled
-            var x = e.x;
-            x -= inst.svgRect.left;
-            if (x < 0) { x = 0; }
-
-            var nodeElement = inst.svg.select("#" + n.data.id);
-            var et = nodeElement.attr('transform')
-                .replace('translate(', '').replace(')', '').split(', ');
-            var y = parseInt(et[1]) + levelHeight + 2;
-
-            if (x == undefined || y == undefined) { return; }
-
-            var contentArray = parseTooltip(n);
-            if (!contentArray || contentArray.length == 0) {
-                return;
+        function fitTooltipWidth(contents, charCntInLine=80) {
+            var contentArray = [];
+            for (var j=0; j<contents.length; j++) {
+                var content = contents[j];
+                var n = parseInt( content.length / charCntInLine ) + 1;
+                var i = 0;
+                while (content) {
+                    // reserved 2 blank for tab
+                    var len = i==0 ? charCntInLine : (charCntInLine - 2);
+                    var line = content.substr(0, charCntInLine);
+                    if (line.trim()) {
+                        if (i > 0) {
+                            line = "  " + line;
+                        }
+                        contentArray.push(line.replace(/ /g, "\u00A0"));
+                    }
+                    content = content.substr(charCntInLine);
+                    i += 1;
+                }
             }
+            return contentArray;
+        }
 
-            var tip = inst.svg.append("g")
-                .attr("class", "profile-flame-tooltip")
-
+        function countMaxTextWidth(inst, contentArray) {
             var textWidth = 0;
+            var tmpG = inst.svg.append("g");
+
             for (var i=0; i<contentArray.length; i++) {
-                var tmpText = tip.append('text').text(contentArray[i]);
+                var tmpText = tmpG.append('text').text(contentArray[i]);
                 var textWidth = Math.max(
                     tmpText.node().getComputedTextLength(),
                     textWidth
                 );
                 tmpText.remove();
             }
-            var range = size[0] - (x + textWidth);
-            if (range < 0){
-                x = size[0] - textWidth - 10;
+            tmpG.remove();
+            return textWidth;
+        }
+
+        function countTooltipBox(inst, e, n, textWidth, lines) {
+            // use event.x, while event.y can be not correct when srcolled
+            var offset = 4;
+            var x = e.x + offset;
+            x -= inst.svgRect.left;
+            if (x < 0) { x = 0; }
+
+            var nodeElement = inst.svg.select("#" + n.data.id);
+            var et = nodeElement.attr('transform')
+                .replace('translate(', '').replace(')', '').split(', ');
+            var y = parseInt(et[1]) + levelHeight + offset;
+
+            if (x == undefined || y == undefined) { return; }
+
+            // count remain xrange after draw tip
+            // if xrange < 0, means tip overflowed, count new x to fit
+            var xrange = size[0] - (x + textWidth);
+            if (xrange < 0){
+                x = Math.max(
+                    //size[0] - textWidth - offset - (size[0] - x) - 10,
+                    x - textWidth - offset - 10,
+                    0
+                );
             }
             var height = tooltipMargin * 2 +
-                tooltipLineHeight * contentArray.length;
+                tooltipLineHeight * lines;
+            // as well as xrange
+            var yrange = size[1] - (y + height);
+            if (yrange < 0) {
+                y = Math.max(
+                    //size[1] - height - offset - (size[1] - y) - levelHeight,
+                    y - height - offset - levelHeight,
+                    0
+                );
+            }
+            return {
+                x: x,
+                y: y,
+                height: height
+            }
+        }
+
+        // draw a tooltip to describe entry
+        function showTooltip(inst, n) {
+            var contentArray = fitTooltipWidth( formatTooltip(n) );
+            if (!contentArray || contentArray.length == 0) { return; }
+
+            var textWidth = countMaxTextWidth(inst, contentArray);
+            var box = countTooltipBox(inst, d3.event, n, textWidth, contentArray.length);
+            if (!box) { return; }
+
+            var tip = inst.svg.append("g")
+                .attr("class", "profile-flame-tooltip")
+
             tip.append('rect')
                 .attr('width', textWidth + 8)
-                .attr('height', height)
-                .attr('x', x)
-                .attr('y', y + 2)
+                .attr('height', box.height)
+                .attr('x', box.x)
+                .attr('y', box.y + 2)
                 .attr('rx', 5)
                 .attr('ry', 5)
                 .attr('fill', '#333333')
@@ -873,9 +1209,9 @@
 
             for (var i=0; i<contentArray.length; i++) {
                 var content = contentArray[i];
-                var yi = y +  i * tooltipLineHeight;
+                var yi = box.y +  i * tooltipLineHeight;
                 tip.append('text')
-                    .attr('x', x)
+                    .attr('x', box.x)
                     .attr('y', yi)
                     .attr('dx', '0.35em')
                     .attr('dy', '1.5em')
@@ -886,70 +1222,6 @@
 
         function hideTooltip(inst) {
             inst.svg.selectAll("g.profile-flame-tooltip").remove();
-        }
-
-        // place a breadcrumb bar in the bottom to show chain
-        function drawBreadcrumb(inst, nodes) {
-            clearBreadcrumb(inst);
-            if (!nodes || nodes.length == 0) {
-                return;
-            }
-            nodes = nodes.splice(0, maxBreadcrumbs).reverse();
-            var width = breadcrumbSize[0],
-                height = breadcrumbSize[1],
-                tail = 10,
-                space = 3,
-                top = size[1] - footerHeight + 3;
-
-            var cbTranslate = function(n, i) {
-                var x = i * (width + space),
-                    y = top;
-                return 'translate({x}, {y})'
-                    .replace('{x}', x).replace('{y}', y);
-            }
-
-            var cbLabelTanslate = function(n) {
-                var x = (width + space) * nodes.length + 3,
-                    y = top + height / 2;
-                return 'translate({x}, {y})'
-                    .replace('{x}', x).replace('{y}', y);
-            }
-            var cbEntryText = function(n, i) {
-                return trimText(n.data.entry, 16)
-            }
-            var cbDataText = function(n, i) {
-                return parseEntryDesc(n, 32);
-            }
-            var cbFill = function(n) { return n.data.color; }
-            var g = inst.svg.selectAll('g.legend').data(nodes);
-            var node = g.enter().append('g')
-                .attr('class', 'legend')
-                .attr('transform', cbTranslate);
-
-            node.append('polygon')
-                .attr('points', breadcrumbPoints)
-                .style('fill', cbFill);
-
-            var text = node.append('text')
-                .attr('x', (width + tail) / 2)
-                .attr('y', height / 2)
-                .attr('dy', '0.35em')
-                .attr('text-anchor', 'middle')
-                .text(cbEntryText)
-
-            inst.svg.append('g')
-                .attr('class', 'legend')
-                .append('text')
-                    .datum(nodes[nodes.length - 1])
-                    .attr('transform', cbLabelTanslate)
-                    .attr('dy', '0.35em')
-                    .attr('dx', '1em')
-                    .text(cbDataText)
-        }
-
-        // remove all breadcrumbs
-        function clearBreadcrumb(inst) {
-            inst.svg.selectAll('g.legend').remove();
         }
 
 
@@ -975,6 +1247,141 @@
 
 
 ////// TOOL FUNCTIONS
+
+        var pathSeps = [
+            "\\",
+            "/"
+        ];
+        var getShortDemangled = function(d) {
+            // py function and lua function
+            if (d.indexOf('.py') != -1 || d.indexOf('.lua') != -1){
+                for(var i=0; i<pathSeps.length; i++) {
+                    var xIndex = d.lastIndexOf(pathSeps[i])
+                    if (xIndex != -1) {
+                        d = d.substr(xIndex + 1);
+                    }
+                }
+            }
+            // c/c++ function
+            else {
+                if (d.indexOf('<') == -1 && d.indexOf('(') == -1) {
+                    return d;
+                }
+                var dl = d.split('');
+                var indexes = getMatchedBracketIndexs(d, '<', '>');
+                for (var i=0; i<indexes.length; i++) {
+                    var indexPair = indexes[i];
+                    for (var j=indexPair[0]; j<=indexPair[1]; j++) {
+                        dl[j] = '';
+                    }
+                }
+                var indexes = getMatchedBracketIndexs(d, '(', ')');
+                for (var i=0; i<indexes.length; i++) {
+                    var indexPair = indexes[i];
+                    for (var j=indexPair[0]+1; j<indexPair[1]; j++) {
+                        dl[j] = '';
+                    }
+                }
+                d = dl.join('');
+                // remove () and const behind.
+                d = d.split('(', 1)[0];
+            }
+            return d;
+        };
+
+        var formatComplexEntry = function(d) {
+            var ret = {
+                shortEntry: null,
+                entryPrefix: null,
+                function: null,
+                entry: null,
+                module: null,
+                filepath: null,
+                lineNumber: null,
+            }
+            if (d.indexOf('.py') != -1 || d.indexOf('.lua') != -1){
+                // vm stack
+                ret.entry = ret.shortEntry = getShortDemangled(d);
+                var items = d.split(":")
+                // last one is line number, so it shoud be path:entry:line
+                ret.lineNumber = parseInt(items[items.length-1]) || null;
+                // path may have ':', so join remain items
+                ret.filepath = items.slice(0, ret.lineNumber ? -2 : -1).join(":");
+                if (ret.lineNumber) {
+                    ret.shortEntry = ret.shortEntry.replace(":" + ret.lineNumber, "");
+                }
+            }
+            else {
+                // common mtrace format
+                ret.entry = d;
+                ret.shortEntry = getShortDemangled(ret.entry);
+            }
+            var funcSep = ":"
+            var index = ret.shortEntry.lastIndexOf(funcSep)
+            if (index != -1) {
+                ret.function = ret.shortEntry.substr(index+1);
+                ret.entryPrefix = ret.shortEntry.substr(0, index+1);
+            } else {
+                ret.function = ret.shortEntry;
+            }
+
+            return ret;
+        }
+
+        var gnrZoomHistory = function() {
+            return {
+                current: null,
+                forwardArray: [],
+                backwardArray: [],
+                size: 20,
+                set: function(n) {
+                    if (this.current) {
+                        this.push(this.backwardArray, this.current);
+                    }
+                    this.current = n;
+                },
+                push: function(a, n) {
+                    if (a[a.length-1] == n) {
+                        return;
+                    }
+                    a.push(n);
+                    while (a.length > this.size) {
+                        a.shift();
+                    }
+                },
+                forward: function() {
+                    var n = this.forwardArray.pop();
+                    if (n) {
+                        if (this.current) {
+                            this.push(this.backwardArray, this.current);
+                        }
+                        this.current = n;
+                    }
+                    return n;
+                },
+                backward: function() {
+                    var n = this.backwardArray.pop();
+                    if (n) {
+                        if (this.current) {
+                            this.push(this.forwardArray, this.current);
+                        }
+                        this.current = n;
+                    }
+                    return n;
+                },
+                canForward: function() {
+                    return this.forwardArray.length != 0;
+                },
+                canBackward: function() {
+                    return this.backwardArray.length != 0;
+                },
+                reset: function(r) {
+                    this.backwardArray.length = 0;
+                    this.forwardArray.length = 0;
+                    this.current = r;
+                }
+            }
+        };
 
         // node equal
         function equal(m, n) {
@@ -1069,11 +1476,10 @@
         }
 
         // generate color by comparing of two val
-        function compareToColor(a, b) {
-            if (!b){
+        function compareToColor(percent) {
+            if (percent === null){
                 return compareColors.blank;
             }
-            var percent = (a - b) / b;
             var i=0;
             for(; i<thresholds.length; i++){
                 if (percent <= thresholds[i]) {
@@ -1118,38 +1524,64 @@
             return Math.pow(1 - vector / max, 2);
         }
 
+        function parseDataDesc(n) {
+            if (compare && compareMethod == 'internal') {
+                var value = n.data.internalValue;
+                var percent = n.data.internalPercent;
+            }
+            else{
+                var value = n.data.value;
+                var percent = n.data.percent;
+            }
+            var internalContent = "Internal       : {V}  {P}"
+                .replace('{V}', n.data.internalValue)
+                .replace('{P}', formatPercent(n.data.internalPercent))
+            var cumulativeContent = "Cumulative : {V}  {P}"
+                .replace('{V}', n.data.value)
+                .replace('{P}', formatPercent(n.data.percent))
+
+            if (compare) {
+                internalContent += ' | {V}  {P} | {D}'
+                    .replace('{V}', n.data.internalCompareValue)
+                    .replace('{P}',
+                        formatPercent(n.data.internalComparePercent))
+                    .replace('{D}', formatDiff(n.data.internalCompareDiff));
+                cumulativeContent += ' | {V}  {P} | {D}'
+                    .replace('{V}', n.data.compareValue)
+                    .replace('{P}', formatPercent(n.data.comparePercent))
+                    .replace('{D}', formatDiff(n.data.compareDiff));
+            }
+            return {
+                internalContent: internalContent,
+                cumulativeContent: cumulativeContent
+            }
+        }
+
         // parse description of entry and its data
         // shortcut the entry name if its too long
         function parseEntryDesc(n, entryMax) {
             var entry = trimText(n.data.entry, entryMax);
-            var content = "{E} ({V} {P})"
+            var dataDesc = parseDataDesc(n);
+            return "{E}||{I}||{C}"
                 .replace('{E}', entry)
-                .replace('{V}', n.data.value)
-                .replace('{P}', (n.data.percent * 100).toFixed(2) + '%');
-            if (n.data.compareValue) {
-                content += " | ({V} {P})"
-                .replace('{V}', n.data.compareValue)
-                .replace('{P}', (n.data.comparePercent *100).toFixed(2) + '%');
-            }
-            return content;
+                .replace('{I}', dataDesc.internalContent)
+                .replace('{C}', dataDesc.cumulativeContent);
         }
 
-        // generate breadcrumb polygon's points
-        function breadcrumbPoints(d, i) {
-            var width = breadcrumbSize[0],
-                height = breadcrumbSize[1],
-                tail = 10,
-                points = [];
-            points.push("0,0");
-            points.push(width + ",0");
-            points.push(width + tail + "," + (height / 2));
-            points.push(width + "," + height);
-            points.push("0," + height);
-            // Leftmost breadcrumb; don't include 6th vertex.
-            if (i > 0) {
-                points.push(tail + "," + (height / 2));
+        function formatPercent(p) {
+            return (p * 100).toFixed(2) + '%'
+        }
+
+        function formatDiff(diff) {
+            if (diff === undefined
+                || isNaN(diff)
+                || diff === null
+                || Math.abs(diff) === Infinity
+            ) {
+                return 'NaN';
             }
-            return points.join(" ");
+            var prefix = diff > 0 ? '+' : '';
+            return prefix + (diff * 100).toFixed(2) + '%';
         }
 
         // get node and its ancestors to build a chain

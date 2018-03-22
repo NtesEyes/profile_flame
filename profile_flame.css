@@ -55,21 +55,25 @@
 }
 
 .profile-flame g.node.on-search rect {
-    stroke: red;
     fill-opacity: 1;
-    stroke-width: 3;
-    cursor: pointer;
+    /*fill: #ed5565;*/
+    /*fill: red;*/
+    fill: #CC00CC;
 }
 
 .profile-flame g.node rect {
     stroke: #eeeeee;
     fill-opacity: .8;
-    stroke-width: 1;
+    stroke-width: .5;
     cursor: pointer;
 }
 
 .profile-flame g.virtual rect{
     fill-opacity: .6;
+}
+
+.profile-flame g.specified rect{
+    fill: #284B63;
 }
 
 .profile-flame g.focus rect {
@@ -80,3 +84,12 @@
     cursor: pointer;
 }
 
+.profile-flame g.node tspan.highlightFunction{
+    cursor: pointer;
+    font-weight: bolder;
+}
+
+
+.hide {
+    display: none;
+}
