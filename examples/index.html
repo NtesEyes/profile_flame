@@ -1,0 +1,25 @@
+<html>
+    <head>
+        <script src="https://d3js.org/d3.v4.js"></script>
+        <!-- <script src="/d3.v4.js"></script> -->
+        <script src="/profile_flame.js"></script>
+        <link href="/profile_flame.css" rel="stylesheet"></link>
+
+        <script src="/examples/data.js"></script>
+        <script src="/examples/profile_flame_sample.js"></script>
+    </head>
+    <body>
+        <h2> Single Flame Example With Toolbar </h2>
+        <div class='toolbar'>
+            <button onclick="profileFlame.reset()">Reset</button>
+            <button onclick="profileFlame.backward()">FocusBackward</button>
+            <button onclick="profileFlame.forward()">FocusForward</button>
+            <input id='search-input' type='text' placeholder='entry search ...'/>
+            <span id='search-result'></span>
+        </div>
+        <div class='single-flame-container'></div>
+        <br/>
+        <h2> Compare Flame Example </h2>
+        <div class='compare-flame-container'></div>
+    </body>
+</html>

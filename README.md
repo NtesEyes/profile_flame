@@ -1,11 +1,12 @@
 # Profile Flame
 
 A javascript lib renders profile flame graph based on d3.js.
+
 Find more details about flame in brendangregg's [FlameGraph](https://github.com/brendangregg/FlameGraph).
 
 ## A Quick View
 
-![FlameGraphSample](FlameGraphSample.gif)
+![profileFlameExample](profileFlameExample.gif)
 
 ## How To Use
 
@@ -32,51 +33,51 @@ d3.select(container)
 
 ## API Refs
 
-** compare(compareBool) **
+* compare(compareBool) *
 
 compare switcher, when in compare mode, data passed by d3 must be an array with two items;
 
-** width([width]) **
+**width([width])**
 
-** height([height]) **
+**height([height])**
 
-** cutoff([cutoff]) **
+**cutoff([cutoff])**
 
 set/get cutoff threshold, entry with lower percent will be ignored. useful for those huge profiles.
 
-** maxDepth([maxDepth])
+**maxDepth([maxDepth])**
 
 set/get max depth of stacks
 
 
-** specifiedEntries(entriesArray) **
+**specifiedEntries(entriesArray)**
 
 set/get array of specified entries, will only render stacks with these entries.
 
-** search(kw) **
+**search(kw)**
 
 set search keyword, those entries matched will be render in purple.
 
-** reset() **
+**reset()**
 
 reset flame to origin state
 
-** reverseCompare() **
+**reverseCompare()**
 
 reverse the two data items comparing
 
-** compareMethod([method]) **
+**compareMethod([method])**
 
 set/get compare method, allowed mode:
 
 * cumulative
 * internal
 
-** backward() **
+**backward()**
 
 go backward on focus histories
 
-** forward() **
+**forward()**
 
 go forward on focus histories
 
