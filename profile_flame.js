@@ -478,7 +478,7 @@
                     inst.tree = parseCompare(
                         data[0].flame, data[1].flame, index
                     );
-                    if (!data[0].flame || !data[0].flame.num){
+                    if (!data[0].flame || data[0].flame.num === 0){
                         inst.noData = true;
                     }
                     inst.compareFlame = [data[0].flame, data[1].flame];
@@ -486,7 +486,7 @@
                 else{
                     inst.title = data.title;
                     inst.tree = parse(data.flame, index);
-                    if (!data.flame || !data.flame.num){
+                    if (!data.flame || data.flame.num === 0){
                         inst.noData = true;
                     }
                 }

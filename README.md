@@ -4,6 +4,8 @@ A javascript lib renders profile flame graph based on d3.js.
 
 Find more details about flame in brendangregg's [FlameGraph](https://github.com/brendangregg/FlameGraph).
 
+[![npm version](https://badge.fury.io/js/profile_flame.svg)](https://badge.fury.io/js/profile_flame)
+
 ## A Quick View
 
 ![profileFlameExample](profileFlameExample.gif)
@@ -29,6 +31,31 @@ var profileFlame = d3.profileFlame()
 d3.select(container)
     .datum([exampleData1, exampleData2])
     .call(profileFlame);
+```
+
+provide data like this:
+
+```
+var exampleData1 = {
+    flame: {
+      "height": 2, // total height of stacks
+      "tree": {
+        "oneEntry": [ // [subTree, samples of this entry]
+          {
+            "oneSubEntry": [
+              {},
+              36
+            ]
+          },
+          37
+        ],
+        "anotherEntry": [
+          {},
+          22
+        ],
+      }
+    }
+}
 ```
 
 ## API Refs

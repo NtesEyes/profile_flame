@@ -1,0 +1,31 @@
+{
+  "name": "profile_flame",
+  "version": "1.0.1",
+  "description": "A javascript lib renders profile flame graph based on d3.js.",
+  "main": "profile_flame.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/valensc/profile_flame.git"
+  },
+  "keywords": [
+    "flame",
+    "profile",
+    "d3.js"
+  ],
+  "author": "valensc",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/valensc/profile_flame/issues"
+  },
+  "homepage": "https://github.com/valensc/profile_flame#readme",
+  "readme": "README.md",
+  "dependencies": {
+    "d3": "^4.2.2"
+  }
+}

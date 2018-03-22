@@ -1,7 +1,6 @@
 var exampleData1 = {
     flame: {
       "height": 25,
-      "num": 56540.0,
       "tree": {
         "SymbolNotFound!": [
           {
@@ -638,7 +637,6 @@ var exampleData1 = {
 var exampleData2 = {
     flame: {
       "height": 25,
-      "num": 56493.0,
       "tree": {
         "SymbolNotFound!": [
           {
